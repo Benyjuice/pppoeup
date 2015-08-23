@@ -1,0 +1,102 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2008 OpenWrt.org
+# modified by rapistor
+
+start() {
+	state=`ps|grep -c pppoe-me`
+	[ "$state" -ge "4" ] && echo "another pppoe-me is running,exit "
+	[ "$state" -ge "4" ] && exit
+
+	enable=`uci get pppoeup.settings.enable -q`
+	concurrent=`uci get pppoeup.settings.concurrent_dial -q`
+	number=`uci get pppoeup.settings.number -q`
+	n=`uci get pppoeup.settings.n -q`
+	ok=`uci get pppoeup.settings.ok -q`
+	sleep_time=`uci get pppoeup.settings.sleep_time -q`
+	wait_time=`uci get pppoeup.settings.wait_time -q`
+	samemac=`uci get pppoeup.settings.1mac -q`
+
+
+	j=$(ifconfig | grep "pppoe-" | wc -l)
+	state=`ps | grep -c re_dial`
+	if [ "$j" -ge "$ok" ]  && [ "$state" = "1" ] ;  then
+	echo "equal or more than the set [$ok] dial, and will exit....."
+	exit 0
+	fi
+
+	if [ "$enable" == "0" ] ;  then
+	echo "pppoeup is disabled,exit!" && exit
+	fi
+
+	mwan3 stop
+	kill -INT `pidof pppd`
+	sleep 2
+
+	echo "[syncppp]change mac ..........."
+   for i in $( seq 1 $(($n-1)))
+   do
+	ifname=wan$i
+	ifvth=vth$i
+	ifwan=$(uci get network.wan.ifname)
+	if [ $samemac -eq 1 ] ; then
+		echo "using the same mac to dial"
+		mac=`ifconfig $ifwan | grep HWaddr | awk '{print $5}'`
+	else
+		echo "using random macs to dial"
+		macfac=$(ifconfig | grep $ifwan | tr -s " " | cut -d " " -f5 | cut -b 1-8)
+		mac="$macfac:"$(md5sum /proc/sys/kernel/random/uuid | sed 's/\(..\)/&:/g' | cut -b 1-8 | tr [a-f] [A-F])
+	fi
+		echo "delete $ifvth" && ip link del $ifvth
+		ip link add link $ifwan $ifvth type macvlan
+		ifconfig $ifvth hw ether $mac
+		echo "Add interface: $ifvth - $mac"
+   done
+
+   for q in $( seq 1 $number )
+   do
+	echo ___________________________________________________
+	echo [syncppp]start the $q dial ...........
+
+
+	user=`uci get network.wan.username`
+	user=`echo -e "$user"`
+	pass=`uci get network.wan.password`
+	echo "[syncppp]kill process pppd .........."
+
+	kill -INT `pidof pppd`
+
+	echo "[syncppp]waiting $sleep_time s ............."
+	sleep $sleep_time
+
+	echo "[syncppp]sync dialing............."
+	for i in $( seq 0 $(($n-1)))
+	do
+	if [ "$i" == "0"  ] ; then
+		interface=wan
+		ifname=$ifwan
+	else
+		interface=wan$i
+		ifname=vth$i
+	fi
+
+	if [ "$enable" = "1" ] && [ "$concurrent" = "1" ] ; then
+	/usr/sbin/pppd syncppp $n +ipv6 nodetach ipparam $interface ifname pppoe-$interface nodefaultroute usepeerdns persist maxfail 1 ${user:+user "$user" password "$pass"} ip-up-script /lib/netifd/ppp-up ip-down-script /lib/netifd/ppp-down ipv6-up-script /lib/netifd/ppp-up ipv6-down-script /lib/netifd/ppp-down mtu 1492 mru 1492 plugin rp-pppoe.so nic-$ifname &
+	else
+	/usr/sbin/pppd +ipv6 nodetach ipparam $interface ifname pppoe-$interface nodefaultroute usepeerdns persist maxfail 1 ${user:+user "$user" password "$pass"} ip-up-script /lib/netifd/ppp-up ip-down-script /lib/netifd/ppp-down ipv6-up-script /lib/netifd/ppp-up ipv6-down-script /lib/netifd/ppp-down mtu 1492 mru 1492 plugin rp-pppoe.so nic-$ifname &
+	fi
+	done
+
+	echo "[syncppp]sync dial complete............."
+	echo "wait $wait_time s before dial" && sleep $wait_time
+
+	j=`ifconfig|grep -c inet.*P-t-P`
+	echo "[syncppp] [$n] dialed and [$j] dial succeed ....."
+
+	! [ "$j" -ge "$ok" ] && echo "[syncppp] [$j] dial succeed, less than the the set [$ok] dial, and will retry..."
+	[ "$j" -ge "$ok" ] && echo "[syncppp]succeed [$j] dial, equal or more than the set [$ok] dial, and pppoe-me will exit..."
+
+	[ "$j" -ge "$ok" ] && echo "exit"  && exit
+done
+	! [ "$j" -ge "$ok" ] && echo "$number dial failed,exit!!" && exit
+}
+

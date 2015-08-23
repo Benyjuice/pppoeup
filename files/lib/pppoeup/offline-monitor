@@ -1,0 +1,39 @@
+#!/bin/sh /etc/rc.common
+# by rapistor
+
+
+start() {
+
+	state=`ps|grep -c offline-monitor`
+	[ "$state" -ge "4" ] && echo "another offline-monitor is running,exit"
+	[ "$state" -ge "4" ] && exit
+
+	offline_num=`uci get pppoeup.settings.offline_num -q`
+	offline_check=$(uci get pppoeup.settings.offline_check)
+	enabled=$(uci get pppoeup.settings.enable)
+	ok=$(uci get pppoeup.settings.ok)
+
+	[ $offline_check -eq 0 ]  && {
+	echo "offline-monitor disabled."
+	exit 0
+	}
+	
+	[ $enabled -eq 0 ]  && {
+	echo "pppoeup disabled."
+	exit 0
+	}
+
+	online_num=$(mwan3 status| grep -c "is online")
+	offlinenum=$((${ok}-${online_num}))
+	[ $offline_num -gt $offlinenum ]  && {
+	echo "less than offline_check number."
+	exit 0
+	}
+
+	ps|grep hotplug-call|grep -v "grep hotplug-call"|awk '{print $1}'|xargs kill -9
+	sleep 1
+	ps | grep re_dial | grep -v "grep re_dial" | awk '{print $1}' | xargs kill -9
+	ps | grep pppoe-me | grep -v "grep pppoe-me" | awk '{print $1}' | xargs kill -9
+	/lib/pppoeup/re_dial start 
+
+}

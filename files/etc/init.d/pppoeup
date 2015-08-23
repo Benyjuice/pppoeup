@@ -1,0 +1,12 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2011 OpenWrt.org
+
+START=99
+
+boot () {
+local   enabled=$(uci get pppoeup.settings.enable)
+	[ "$enabled" -eq 1 ]  &&{
+	/lib/pppoeup/pppoe-me start
+}
+}
+

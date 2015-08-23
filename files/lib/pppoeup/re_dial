@@ -1,0 +1,38 @@
+#!/bin/sh /etc/rc.common
+# by rapistor
+
+start() {
+	state=`ps|grep -c re_dial`
+	[ "$state" -ge "4" ] && echo "another re_dial is running,exit"
+	[ "$state" -ge "4" ] && exit
+
+	check_time=`uci get pppoeup.settings.check_time -q`
+	add_check=$(uci get pppoeup.settings.add_check)
+	ps|grep pppoe-me|grep -v "grep pppoe-me"|awk '{print $1}'|xargs kill -9
+	sleep 1
+	ps|grep hotplug-call|grep -v "grep hotplug-call"|awk '{print $1}'|xargs kill -9
+	echo 'sleep 2 S before start pppoe-me.' && sleep 2
+	/lib/pppoeup/pppoe-me start
+
+	[ $add_check -eq 0 ]  && {
+	echo "add_check disabled,exit..."
+	exit 0
+	}
+
+#WAN_NUM=$(ifconfig | grep "pppoe-wan" | wc -l)
+ok=$(uci get pppoeup.settings.ok)
+N=$(uci get pppoeup.settings.check_times)
+j=1
+while [ $j -le $N ]
+do
+	online_num=$(mwan3 status| grep -c "is online")
+	if  [ ! "$ok" = "$online_num" ]; then
+	echo "$online_num WAN is online, waiting for $check_time S for next status-check" && [ $j -eq $N ] || sleep $check_time
+	elif  [ "$ok" = "$online_num" ]; then
+	echo "All wans are added, and re_dial  exit..." && exit 0
+	fi
+	j=$(($j+1))
+done
+	echo "WAN add failed,mwan3 restart"  &&  mwan3 restart
+}
+
